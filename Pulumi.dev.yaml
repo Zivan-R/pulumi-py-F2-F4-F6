@@ -1,0 +1,10 @@
+encryptionsalt: v1:Yem8t/WJxr0=:v1:MLlDjYiBUBuuyHcC:K255cdnoiR+9Qi9Y8+wyzW6umHyzFw==
+config:
+  pve:nodeName: proxmox
+  pve:datastoreId: local-lvm
+  pve:poolId: ci-pool
+  pve:templateVmid: "9000"
+  vm:username: debian
+  vm:sshPubKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM0zhlTyScj6esjYTYTM1KhHHtZAuyA/OobZYFXuHHAP jumphost01
+  vm:cores: "2"
+  vm:memoryMb: "2048"

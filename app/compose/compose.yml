@@ -1,0 +1,15 @@
+services:
+  web:
+    build:
+      context: ../web
+    image: localhost/rncp-web:latest
+    environment: [ APP_VERSION=v0.1.0 ]
+    restart: unless-stopped
+  haproxy:
+    image: haproxy:2.9
+    depends_on: [ web ]
+    ports: [ "8080:8080" ]
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    restart: unless-stopped
+
