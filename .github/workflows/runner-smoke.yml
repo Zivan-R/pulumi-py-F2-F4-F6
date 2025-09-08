@@ -1,0 +1,12 @@
+name: Runner smoke test
+on: workflow_dispatch
+
+jobs:
+  ping:
+    runs-on: [self-hosted, proxmox, debian12]
+    steps:
+      - name: Show host info
+        run: |
+          whoami
+          uname -a
+          echo "Runner OK"
