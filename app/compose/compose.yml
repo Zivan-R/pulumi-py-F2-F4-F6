@@ -1,17 +1,19 @@
+version: "3.8"
+
 services:
   web:
-    build:
-      context: ../web
-    image: localhost/rncp-web:latest
-    environment: [ APP_VERSION=v0.1.0 ]
+    build: ../web
     restart: unless-stopped
-    expose:
-      - "8000"
-  haproxy:
-    image: docker.io/library/haproxy:2.9
-    depends_on: [ web ]
-    ports: [ "0.0.0.0:8080:8080" ]
-    volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    restart: unless-stopped
+    ports:
+      - "8080:8000"       
+
+
+
+        #  haproxy:
+        #image: docker.io/library/haproxy:2.9
+        #depends_on: [ web ]
+        #ports: [ "0.0.0.0:8080:8080" ]
+        #volumes:
+        #- ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+        #restart: unless-stopped
 
