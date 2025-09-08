@@ -38,7 +38,7 @@ jobs:
           source .venv/bin/activate
           pulumi login --local
           pulumi stack select "$STACK_NAME" || pulumi stack init "$STACK_NAME"
-          pulumi config set pve:nodeName pve
+          pulumi config set pve:nodeName proxmox
           pulumi config set pve:datastoreId local-lvm
           pulumi config set pve:poolId ci-pool
           pulumi config set pve:templateVmid 9000
