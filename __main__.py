@@ -55,7 +55,15 @@ vm_res = proxmoxve.vm.VirtualMachine(
 
 start_vm = command.local.Command(
     "force-start-vm",
-    create=vm_res.vm_id.apply(lambda id: f"qm start {id}"),
+    create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
+curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
+  -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
+  -X POST "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/start" | grep -qE "^(200|204)$"
+'"""),
+    environment={
+        "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
+        "PVE_TOKEN": os.environ.get("PROXMOX_VE_API_TOKEN"),
+    },
     opts=pulumi.ResourceOptions(depends_on=[vm_res]),
 )
 
@@ -63,7 +71,7 @@ pulumi.export("vmId", vm_res.vm_id)
 pulumi.export("vmName", vm_res.name)
 
 # 2) Provision dans la VM via SSH : Podman + app + HAProxy ---
-cfg_vm_ip = cfg.get("vm:ip")  # override manuel possible
+cfg_vm_ip = cfg.get("ip")  # override manuel possible
 
 private_key = os.environ.get("VM_SSH_PRIVATE_KEY")
 if not private_key:
@@ -118,7 +126,7 @@ echo "SSH non disponible après les tentatives"; rm -f /tmp/pulumi_tmp_key; exit
 wait_for_ssh = command.local.Command(
     "wait-for-ssh",
     create=wait_script,
-    opts=pulumi.ResourceOptions(depends_on=[vm_res]),
+    opts=pulumi.ResourceOptions(depends_on=[start_vm]),
 )
 
 # ConnectionArgs utilise vm_ip_output (Output), Pulumi attendra la résolution
