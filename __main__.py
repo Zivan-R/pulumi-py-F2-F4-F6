@@ -134,7 +134,7 @@ mkdir -p /home/{vm_username}/app && sudo chown -R {vm_username}:{vm_username} /h
     opts=pulumi.ResourceOptions(depends_on=[wait_for_ssh]),
 )
 
-cp = command.remote.CopyToRemote(
+cp = command.remote.CopyDirectory(
     "copy-app",
     connection=conn,
     source="app",
