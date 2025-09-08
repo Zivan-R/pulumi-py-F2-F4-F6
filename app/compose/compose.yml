@@ -5,8 +5,10 @@ services:
     image: localhost/rncp-web:latest
     environment: [ APP_VERSION=v0.1.0 ]
     restart: unless-stopped
+    expose:
+      - "8000"
   haproxy:
-    image: haproxy:2.9
+    image: docker.io/library/haproxy:2.9
     depends_on: [ web ]
     ports: [ "8080:8080" ]
     volumes:
