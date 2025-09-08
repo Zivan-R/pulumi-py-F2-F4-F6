@@ -255,12 +255,19 @@ podman ps
 '""",
     opts=pulumi.ResourceOptions(depends_on=[stage_app]),
 )
-
 test = command.remote.Command(
     "smoke-test",
     connection=conn,
-    create="""bash --noprofile --norc -ce '
-curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
+    create=f"""bash --noprofile --norc -ce '
+IP="{vm_ip_plain}"
+for i in $(seq 1 30); do
+  if curl -fsS --max-time 2 "http://${{IP}}:8080/health" >/dev/null; then
+    exit 0
+  fi
+  sleep 2
+done
+echo "healthcheck failed on http://${{IP}}:8080/health"
+exit 7
 '""",
     opts=pulumi.ResourceOptions(depends_on=[up]),
 )

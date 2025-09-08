@@ -10,7 +10,7 @@ services:
   haproxy:
     image: docker.io/library/haproxy:2.9
     depends_on: [ web ]
-    ports: [ "8080:8080" ]
+    ports: [ "0.0.0.0:8080:8080" ]
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     restart: unless-stopped
