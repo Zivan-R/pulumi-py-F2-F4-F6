@@ -38,20 +38,18 @@ jobs:
           source .venv/bin/activate
           pulumi login --local
 
-          pulumi stack select --stack "$STACK_NAME" || pulumi stack init --stack "$STACK_NAME"
-          pulumi config set --stack "$STACK_NAME" pulumi-py:pve:nodeName proxmox
-          pulumi config set --stack "$STACK_NAME" pulumi-py:pve:datastoreId local-lvm
-          pulumi config set --stack "$STACK_NAME" pulumi-py:pve:poolId ci-pool
-          pulumi config set --stack "$STACK_NAME" pulumi-py:pve:templateVmid 9000
-          pulumi config set --stack "$STACK_NAME" pulumi-py:vm:username debian
-          #pulumi config set vm:bridge vmbr0
-          # IP simple par PR (adapte le /24 si autre réseau)
-          OCTET=$((150 + ${{ github.event.pull_request.number }} % 50))
-          #pulumi config set vm:ipCidr "192.168.1.${OCTET}/24"
-          #pulumi config set vm:gateway "192.168.1.1"
-          pulumi config set --stack "$STACK_NAME" pulumi-py:vm:sshPubKey "${{ secrets.VM_SSH_PUBLIC_KEY }}"
-          pulumi config set --stack "$STACK_NAME" pulumi-py:vm:cores     2
-          pulumi config set --stack "$STACK_NAME" pulumi-py:vm:memoryMb  2048
+          pulumi stack select --stack "$STACK_NAME" || \
+            pulumi stack init   --stack "$STACK_NAME"
+
+          pulumi config set-all --stack "$STACK_NAME" --plaintext \
+            pve:nodeName=pve \
+            pve:datastoreId=local-lvm \
+            pve:poolId=ci-pool \
+            pve:templateVmid=9000 \
+            vm:username=debian \
+            vm:sshPubKey="$VM_SSH_PUBLIC_KEY" \
+            vm:cores=2 \
+            vm:memoryMb=2048
 
       - name: pulumi up (expected to FAIL first)
         run: |
