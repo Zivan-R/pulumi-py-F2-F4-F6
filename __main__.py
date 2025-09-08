@@ -33,6 +33,7 @@ vm_res = proxmoxve.vm.VirtualMachine(
     name=vm_name,
     pool_id=pool_id,
     started=True,
+    on_boot=True,
     agent=proxmoxve.vm.VirtualMachineAgentArgs(enabled=True, trim=True),
     cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="x86-64-v2-AES"),
     memory=proxmoxve.vm.VirtualMachineMemoryArgs(dedicated=vm_mem_mb),
