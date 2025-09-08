@@ -20,7 +20,7 @@ vm_cores      = vm.get_int("cores") or 2
 vm_mem_mb     = vm.get_int("memoryMb") or 2048
 bridge        = vm.get("bridge") or "vmbr0"
 
-# IP statique par défaut (surcharge possible via config Pulumi vm:ipCidr / vm:gateway / vm:ip)
+# IP statique par défaut (surcharge possible via vm:ipCidr / vm:gateway / vm:ip)
 vm_ip_cidr  = vm.get("ipCidr") or "192.168.1.160/24"
 vm_gateway  = vm.get("gateway") or "192.168.1.1"
 vm_ip_plain = vm.get("ip") or (vm_ip_cidr.split("/")[0] if "/" in vm_ip_cidr else vm_ip_cidr)
@@ -36,7 +36,7 @@ provider = proxmoxve.Provider(
 
 vm_name = f"ciweb-{pulumi.get_stack()}"
 
-# === Détection idempotente: si la VM existe déjà, on la réutilise (pas de recréation) ===
+# === Détection idempotente VM existante ===
 def _find_existing_vmid(endpoint: str, token: str, node: str, name: str):
     if not endpoint or not token:
         return None
@@ -44,12 +44,11 @@ def _find_existing_vmid(endpoint: str, token: str, node: str, name: str):
         ctx = ssl._create_unverified_context()
         req = urllib.request.Request(
             f"{endpoint}/api2/json/nodes/{node}/qemu",
-            headers={"Authorization": f"PVEAPIToken={token}"}
+            headers={"Authorization": f"PVEAPIToken={token}"},
         )
         with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
             data = json.loads(r.read().decode("utf-8"))
         for item in data.get("data", []):
-            # Proxmox renvoie (int) vmid, (str) name
             if str(item.get("name")) == name:
                 return int(item.get("vmid"))
     except Exception:
@@ -97,7 +96,7 @@ if _existing_vmid is None:
             datastore_id=datastore_id,
             dns=proxmoxve.vm.VirtualMachineInitializationDnsArgs(
                 domain="example.com",
-                servers=[vm_gateway],  # liste requise
+                servers=[vm_gateway],
             ),
             ip_configs=ip_configs,
             user_account=proxmoxve.vm.VirtualMachineInitializationUserAccountArgs(
@@ -115,11 +114,11 @@ pulumi.export("vmId", vm_id_output)
 pulumi.export("vmName", pulumi.Output.from_input(vm_name))
 pulumi.export("vm_ip", pulumi.Output.from_input(vm_ip_plain))
 
-# === Retire IDE3 éventuel (cdrom host vide) ===
+# === Retire IDE3 éventuel ===
 fix_cd_dep = [vm_res] if vm_res is not None else None
 fix_cd = command.local.Command(
     "fix-ide3-if-present",
-    create=vm_id_output.apply(lambda vid: f"""bash -ceu '
+    create=vm_id_output.apply(lambda vid: f"""bash -ce '
 code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
   -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
   -X PUT --data-urlencode "delete=ide3" \
@@ -136,7 +135,7 @@ code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
 # === Démarrage idempotent via API PVE ===
 ensure_start = command.local.Command(
     "ensure-start",
-    create=vm_id_output.apply(lambda vid: f"""bash -ceu '
+    create=vm_id_output.apply(lambda vid: f"""bash -ce '
 json=$(curl -sS -k -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
   "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/current" || true)
 if echo "$json" | grep -q '"status":"stopped"'; then
@@ -153,13 +152,13 @@ fi
     opts=pulumi.ResourceOptions(depends_on=[fix_cd] if fix_cd_dep else None),
 )
 
-# === Attente SSH (bash explicite, backoff exponentiel) ===
+# === Attente SSH (bash, backoff exponentiel) ===
 private_key = os.environ.get("VM_SSH_PRIVATE_KEY")
 if not private_key:
     raise pulumi.RunError("VM_SSH_PRIVATE_KEY doit être défini")
 
 wait_script = vm_id_output.apply(
-    lambda _: f"""bash -ceu '
+    lambda _: f"""bash -ce '
 IP="{vm_ip_plain}"
 [ -n "$IP" ] || {{ echo "ERROR: IP non disponible"; exit 2; }}
 
@@ -200,7 +199,7 @@ conn = command.remote.ConnectionArgs(
 install = command.remote.Command(
     "install-podman",
     connection=conn,
-    create=f"""bash -ceu '
+    create=f"""bash --noprofile --norc -ce '
 sudo apt-get update -y
 sudo apt-get install -y podman podman-compose git curl
 sudo loginctl enable-linger {vm_username}
@@ -214,25 +213,53 @@ cp = command.remote.CopyToRemote(
     "copy-app",
     connection=conn,
     source=pulumi.FileArchive("app"),
-    remote_path=f"/home/{vm_username}/app",
+    remote_path=f"/home/{vm_username}",
     opts=pulumi.ResourceOptions(depends_on=[install]),
+)
+
+stage_app = command.remote.Command(
+    "stage-app-layout",
+    connection=conn,
+    create=f"""bash --noprofile --norc -ce '
+set -e
+mkdir -p /home/{vm_username}/app
+# cas 1: extraction au bon endroit
+if [ -d /home/{vm_username}/app/compose ]; then
+  exit 0
+fi
+# cas 2: extraction à la racine du $HOME
+if [ -d /home/{vm_username}/compose ] || [ -d /home/{vm_username}/web ]; then
+  shopt -s dotglob || true
+  [ -d /home/{vm_username}/compose ] && mv /home/{vm_username}/compose /home/{vm_username}/app/ || true
+  [ -d /home/{vm_username}/web ] && mv /home/{vm_username}/web /home/{vm_username}/app/ || true
+fi
+# cas 3: extraction dans app/app
+if [ -d /home/{vm_username}/app/app ]; then
+  shopt -s dotglob || true
+  mv /home/{vm_username}/app/app/* /home/{vm_username}/app/
+  rmdir /home/{vm_username}/app/app || true
+fi
+sudo chown -R {vm_username}:{vm_username} /home/{vm_username}/app
+ls -la /home/{vm_username}/app
+'""",
+    opts=pulumi.ResourceOptions(depends_on=[cp]),
 )
 
 up = command.remote.Command(
     "compose-up",
     connection=conn,
-    create=f"""bash -ceu '
+    create=f"""bash --noprofile --norc -ce '
 cd /home/{vm_username}/app/compose
 podman compose -f compose.yml up -d --build --scale web=2
 podman ps
 '""",
-    opts=pulumi.ResourceOptions(depends_on=[cp]),
+    opts=pulumi.ResourceOptions(depends_on=[stage_app]),
 )
 
 test = command.remote.Command(
     "smoke-test",
     connection=conn,
-    create="""bash -ceu '
+    create="""bash --noprofile --norc -ce '
 curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
 '""",
     opts=pulumi.ResourceOptions(depends_on=[up]),
