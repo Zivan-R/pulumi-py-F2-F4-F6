@@ -38,18 +38,20 @@ jobs:
           source .venv/bin/activate
           pulumi login --local
 
-          pulumi stack select --stack "$STACK_NAME" || \
-            pulumi stack init   --stack "$STACK_NAME"
+          pulumi stack select --stack "$STACK_NAME" || pulumi stack init --stack "$STACK_NAME"
 
-          pulumi config set-all --stack "$STACK_NAME" --plaintext \
-            pve:nodeName=pve \
-            pve:datastoreId=local-lvm \
-            pve:poolId=ci-pool \
-            pve:templateVmid=9000 \
-            vm:username=debian \
-            vm:sshPubKey="$VM_SSH_PUBLIC_KEY" \
-            vm:cores=2 \
-            vm:memoryMb=2048
+          # ⚠️ Clés EXACTES attendues par __main__.py : pve:* et vm:* (un seul ":")
+          pulumi config set --stack "$STACK_NAME" --plaintext pve:nodeName proxmox
+          pulumi config set --stack "$STACK_NAME" --plaintext pve:datastoreId local-lvm
+          pulumi config set --stack "$STACK_NAME" --plaintext pve:poolId ci-pool
+          pulumi config set --stack "$STACK_NAME" --plaintext pve:templateVmid 9000
+          pulumi config set --stack "$STACK_NAME" --plaintext vm:username debian
+          pulumi config set --stack "$STACK_NAME" --plaintext vm:sshPubKey "$VM_SSH_PUBLIC_KEY"
+          pulumi config set --stack "$STACK_NAME" --plaintext vm:cores 2
+          pulumi config set --stack "$STACK_NAME" --plaintext vm:memoryMb 2048
+
+          echo "---- CONFIG EFFECTIVE ($STACK_NAME) ----"
+          pulumi config --stack "$STACK_NAME"
 
       - name: pulumi up (expected to FAIL first)
         run: |
