@@ -3,7 +3,6 @@ import pulumi
 import pulumi_proxmoxve as proxmoxve
 import pulumi_command as command
 
-# === Config ===
 cfg = pulumi.Config("pve")
 node_name     = cfg.require("nodeName")
 datastore_id  = cfg.require("datastoreId")
@@ -12,17 +11,11 @@ template_vmid = cfg.require_int("templateVmid")
 
 vm = pulumi.Config("vm")
 vm_username   = vm.get("username") or "debian"
-ssh_pub_key   = vm.require("sshPubKey")                     # <-- clé publique lue ici
+ssh_pub_key   = vm.require("sshPubKey")
 vm_cores      = vm.get_int("cores") or 2
 vm_mem_mb     = vm.get_int("memoryMb") or 2048
-bridge        = vm.get("bridge") or "vmbr0"
+bridge        = "vmbr0"
 
-# IP statique (par défaut ta base: 192.168.1.160/24 + GW 192.168.1.1)
-vm_ip_cidr = vm.get("ipCidr") or "192.168.1.160/24"
-vm_gateway = vm.get("gateway") or "192.168.1.1"
-vm_ip_plain = vm.get("ip") or (vm_ip_cidr.split("/")[0] if "/" in vm_ip_cidr else vm_ip_cidr)
-
-# Provider (tokens fournis via env dans le workflow)
 provider = proxmoxve.Provider(
     "proxmoxve",
     endpoint=os.environ.get("PROXMOX_VE_ENDPOINT"),
@@ -33,25 +26,16 @@ provider = proxmoxve.Provider(
 
 vm_name = f"ciweb-{pulumi.get_stack()}"
 
-# Cloud-init IP config
-ip_configs = [
-    proxmoxve.vm.VirtualMachineInitializationIpConfigArgs(
-        ipv4=proxmoxve.vm.VirtualMachineInitializationIpConfigIpv4Args(
-            address=vm_ip_cidr,
-            gateway=vm_gateway,
-        )
-    )
-]
-
-# === VM clone (pas de start auto provider) ===
+# 1) Créer la VM clonée
 vm_res = proxmoxve.vm.VirtualMachine(
     "testVm",
     node_name=node_name,
     name=vm_name,
     pool_id=pool_id,
-    started=False,  # on démarre explicitement après
+    started=False,
+    #on_boot=True,
     agent=proxmoxve.vm.VirtualMachineAgentArgs(enabled=True, trim=True),
-    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="host"),  # safe
+    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="host"),
     memory=proxmoxve.vm.VirtualMachineMemoryArgs(dedicated=vm_mem_mb),
     network_devices=[proxmoxve.vm.VirtualMachineNetworkDeviceArgs(model="virtio", bridge=bridge)],
     clone=proxmoxve.vm.VirtualMachineCloneArgs(
@@ -61,33 +45,24 @@ vm_res = proxmoxve.vm.VirtualMachine(
         retries=3,
     ),
     initialization=proxmoxve.vm.VirtualMachineInitializationArgs(
-        type="nocloud",
-        datastore_id=datastore_id,
-        dns=proxmoxve.vm.VirtualMachineInitializationDnsArgs(
-            domain="example.com",
-            server="1.1.1.1 1.0.0.1",
-        ),
-        ip_configs=ip_configs,
         user_account=proxmoxve.vm.VirtualMachineInitializationUserAccountArgs(
             username=vm_username,
-            keys=[ssh_pub_key],  # <-- ta clé publique injectée pour l’utilisateur
+            keys=[ssh_pub_key],
         ),
     ),
     opts=pulumi.ResourceOptions(provider=provider),
 )
 
-pulumi.export("vmId", vm_res.vm_id)
-pulumi.export("vmName", vm_res.name)
-
-# === Retire IDE3 éventuel (host_cdrom vide) avant start ===
+# Pour une raison inconnue, la vm créée crée un emplacement cd vide ide3 qui n'existe pas sur le template: fix rapide
 fix_cd = command.local.Command(
     "fix-ide3-if-present",
     create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
+# retire IDE3 si présent : PUT /nodes/<node>/qemu/<vmid>/config with delete=ide3
 code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
   -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
   -X PUT --data-urlencode "delete=ide3" \
   "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/config"); \
-[[ "$code" =~ ^(200|202)$ ]] || true
+[[ "$code" =~ ^(200|202)$ ]] || echo "delete ide3 skipped/failed (HTTP $code)"; true
 '"""),
     environment={
         "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
@@ -96,46 +71,31 @@ code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
     opts=pulumi.ResourceOptions(depends_on=[vm_res]),
 )
 
-# === Start via API PVE (robuste) ===
 start_vm = command.local.Command(
     "force-start-vm",
     create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
-code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
+curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
   -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
-  -X POST "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/start"); \
-[[ "$code" =~ ^(200|202|204)$ ]] || (echo "Start failed, HTTP $code" >&2; exit 1)
+  -X POST "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/start" | grep -qE "^(200|202|204)$"
 '"""),
     environment={
         "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
         "PVE_TOKEN": os.environ.get("PROXMOX_VE_API_TOKEN"),
     },
-    opts=pulumi.ResourceOptions(depends_on=[fix_cd]),
+    opts=pulumi.ResourceOptions(depends_on=[vm_res]),
 )
 
-# === Wait 'running' via API (backoff exponentiel jusqu’à ~1 min) ===
-wait_running = command.local.Command(
-    "wait-vm-running",
-    create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
-sleep_s=1
-for i in $(seq 1 12); do
-  json=$(curl -sS -k -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
-    "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/current" || true)
-  echo "$json" | grep -q '"status":"running"' && exit 0
-  sleep "$sleep_s"
-  if [ "$sleep_s" -lt 30 ] ; then sleep_s=$(( sleep_s*2 )); else sleep_s=30; fi
-done
-echo "VM not running after waits"; exit 1
-'"""),
-    environment={
-        "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
-        "PVE_TOKEN": os.environ.get("PROXMOX_VE_API_TOKEN"),
-    },
-    opts=pulumi.ResourceOptions(depends_on=[start_vm]),
-)
+pulumi.export("vmId", vm_res.vm_id)
+pulumi.export("vmName", vm_res.name)
 
-# === IP: on utilise l’IP statique fournie, sinon agent invité ===
-cfg_vm_ip = vm_ip_plain
+# 2) Provision dans la VM via SSH : Podman + app + HAProxy ---
+cfg_vm_ip = vm.get("ip")  # override manuel possible
 
+private_key = os.environ.get("VM_SSH_PRIVATE_KEY")
+if not private_key:
+    raise pulumi.RunError("VM_SSH_PRIVATE_KEY doit être défini")
+
+# tenter plusieurs attributs possibles exposés par le provider Proxmox (compatibilité)
 candidates = []
 for attr_name in ("ipv4_addresses", "guest_ipv4_addresses", "ip_addresses"):
     attr = getattr(vm_res, attr_name, None)
@@ -143,61 +103,58 @@ for attr_name in ("ipv4_addresses", "guest_ipv4_addresses", "ip_addresses"):
         candidates.append(attr)
 
 if candidates:
+    # combine les candidats et renvoie la première IP trouvée (premier élément de la première liste non vide)
     ip_from_agent = pulumi.Output.all(*candidates).apply(
         lambda lists: next((lst[0] for lst in lists if lst), None)
     )
 else:
     ip_from_agent = pulumi.Output.from_input(None)
 
+# vm_ip_final : priorise cfg_vm_ip si présent, sinon prend ip_from_agent
 vm_ip_output = pulumi.Output.all(pulumi.Output.from_input(cfg_vm_ip), ip_from_agent).apply(
     lambda t: t[0] or t[1]
 )
 
-# === Wait SSH (backoff exponentiel), clé privée via env VM_SSH_PRIVATE_KEY ===
-private_key = os.environ.get("VM_SSH_PRIVATE_KEY")
-if not private_key:
-    raise pulumi.RunError("VM_SSH_PRIVATE_KEY doit être défini")
-
+# wait-for-ssh local : boucle depuis la machine qui exécute Pulumi (jumphost/CI) jusqu'à ce que SSH réponde
+# On injecte la private key temporairement dans un fichier, on tente des connexions SSH répétées, puis on supprime le fichier.
 wait_script = pulumi.Output.all(vm_ip_output, pulumi.Output.from_input(private_key)).apply(
     lambda args: f"""#!/usr/bin/env bash
-set -euo pipefail
+set -eux
 IP="{args[0]}"
-[ -n "$IP" ] || {{ echo "ERROR: IP non disponible"; exit 2; }}
+if [ -z "$IP" ]; then
+  echo "ERROR: IP non disponible pour la VM (ni vm:ip ni agent)."; exit 2
+fi
 
-key=/tmp/pulumi_tmp_key_$$
-umask 077
-cat > "$key" <<'KEY'
+cat > /tmp/pulumi_tmp_key <<'KEY'
 {args[1]}
 KEY
+chmod 600 /tmp/pulumi_tmp_key
 
-sleep_s=2
-for i in $(seq 1 12); do
-  if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$key" {vm_username}@${{IP}} 'echo ok' >/dev/null 2>&1; then
-    rm -f "$key"; exit 0
-  fi
-  sleep "$sleep_s"
-  if [ "$sleep_s" -lt 30 ] ; then sleep_s=$(( sleep_s*2 )); else sleep_s=30; fi
+# Attente SSH : 60 essais * 2s = ~120s max (ajuste si besoin)
+for i in $(seq 1 60); do
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i /tmp/pulumi_tmp_key {vm_username}@${{IP}} 'echo ok' && exit 0
+  echo "SSH not ready (attempt $i)..."
+  sleep 2
 done
 
-echo "SSH non disponible après attente"
-rm -f "$key"
-exit 1
+echo "SSH non disponible après les tentatives"; rm -f /tmp/pulumi_tmp_key; exit 1
 """
 )
 
 wait_for_ssh = command.local.Command(
     "wait-for-ssh",
     create=wait_script,
-    opts=pulumi.ResourceOptions(depends_on=[wait_running]),
+    opts=pulumi.ResourceOptions(depends_on=[start_vm]),
 )
 
-# === Remote provisioning ===
+# ConnectionArgs utilise vm_ip_output (Output), Pulumi attendra la résolution
 conn = command.remote.ConnectionArgs(
     host=vm_ip_output,
     user=vm_username,
     private_key=private_key,
 )
 
+# Commandes distantes, s'exécutent après que SSH soit joignable
 install = command.remote.Command(
     "install-podman",
     connection=conn,
@@ -238,4 +195,5 @@ curl -fsS --max-time 10 http://127.0.0.1:8080/health >/dev/null
     opts=pulumi.ResourceOptions(depends_on=[up]),
 )
 
+# 8) expose l'IP finale
 pulumi.export("vm_ip", vm_ip_output)
