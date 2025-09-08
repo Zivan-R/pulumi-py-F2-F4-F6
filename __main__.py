@@ -250,17 +250,22 @@ up = command.remote.Command(
     connection=conn,
     create=f"""bash --noprofile --norc -ce '
 cd /home/{vm_username}/app/compose
+
+# stack simple sans HAProxy ni scaling
 podman-compose up -d --build --remove-orphans
-# attendre que le port 8080 soit ouvert localement (rootless => loopback)
+
+# attendre que 8080 écoute (rootless => loopback)
 for i in $(seq 1 20); do
-  ss -ltn '( sport = :8080 )' | grep -q LISTEN && break
+  if ss -ltn | grep -q ":8080 "; then
+    break
+  fi
   sleep 1
 done
+
 podman ps --format "{{{{.Names}}}}  {{{{.Status}}}}  {{{{.Ports}}}}"
 '""",
     opts=pulumi.ResourceOptions(depends_on=[stage_app]),
 )
-
 # --- Smoke test HTTP /health sur 127.0.0.1:8080 ---
 test = command.remote.Command(
     "smoke-test",
