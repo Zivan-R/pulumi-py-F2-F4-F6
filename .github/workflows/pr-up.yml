@@ -1,0 +1,51 @@
+name: PR Env Up (fail-first)
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  up:
+    runs-on: [self-hosted, proxmox, debian12]
+    env:
+      PROXMOX_VE_ENDPOINT: ${{ secrets.PROXMOX_VE_ENDPOINT }}
+      PROXMOX_VE_API_TOKEN: ${{ secrets.PROXMOX_VE_API_TOKEN }}
+      PROXMOX_VE_INSECURE: ${{ secrets.PROXMOX_VE_INSECURE }}
+      VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
+      VM_SSH_PUBLIC_KEY: ${{ secrets.VM_SSH_PUBLIC_KEY }}
+      STACK_NAME: pr-${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pulumi/setup-pulumi@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python deps
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Prepare Pulumi stack & config
+        run: |
+          source .venv/bin/activate
+          pulumi login --local
+          pulumi stack select "$STACK_NAME" || pulumi stack init "$STACK_NAME"
+          pulumi config set pve:nodeName pve
+          pulumi config set pve:datastoreId local-lvm
+          pulumi config set pve:poolId ci-pool
+          pulumi config set pve:templateVmid 9000
+          pulumi config set vm:username debian
+          pulumi config set vm:bridge vmbr0
+          # IP simple par PR (adapte le /24 si autre réseau)
+          OCTET=$((150 + ${{ github.event.pull_request.number }} % 50))
+          pulumi config set vm:ipCidr "192.168.1.${OCTET}/24"
+          pulumi config set vm:gateway "192.168.1.1"
+          pulumi config set vm:sshPubKey "${{ secrets.VM_SSH_PUBLIC_KEY }}"
+      - name: pulumi up (expected to FAIL first)
+        run: |
+          source .venv/bin/activate
+          pulumi up -y
