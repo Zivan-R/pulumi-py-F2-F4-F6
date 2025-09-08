@@ -65,7 +65,7 @@ vm_res = proxmoxve.vm.VirtualMachine(
         datastore_id=datastore_id,
         dns=proxmoxve.vm.VirtualMachineInitializationDnsArgs(
             domain="example.com",
-            server="1.1.1.1 1.0.0.1",
+            servers="192.168.1.1",
         ),
         ip_configs=ip_configs,
         user_account=proxmoxve.vm.VirtualMachineInitializationUserAccountArgs(
