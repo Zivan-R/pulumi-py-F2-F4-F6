@@ -53,6 +53,24 @@ vm_res = proxmoxve.vm.VirtualMachine(
     opts=pulumi.ResourceOptions(provider=provider),
 )
 
+# Pour une raison inconnue, la vm créée crée un emplacement cd vide ide3 qui n'existe pas sur le template: fix rapide
+fix_cd = command.local.Command(
+    "fix-ide3-if-present",
+    create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
+# retire IDE3 si présent : PUT /nodes/<node>/qemu/<vmid>/config with delete=ide3
+code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
+  -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
+  -X PUT --data-urlencode "delete=ide3" \
+  "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/config"); \
+[[ "$code" =~ ^(200|202)$ ]] || echo "delete ide3 skipped/failed (HTTP $code)"; true
+'"""),
+    environment={
+        "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
+        "PVE_TOKEN": os.environ.get("PROXMOX_VE_API_TOKEN"),
+    },
+    opts=pulumi.ResourceOptions(depends_on=[vm_res]),
+)
+
 start_vm = command.local.Command(
     "force-start-vm",
     create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
