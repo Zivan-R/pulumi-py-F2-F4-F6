@@ -20,15 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pulumi/setup-pulumi@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install Python deps
+      - name: Use system Python and prepare venv
         run: |
-          python -m venv .venv
+          # verify python3 presence
+          python3 --version
+
+          # create a reproducible venv named .venv (matches local dev)
+          python3 -m venv .venv
           source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
+
+          # upgrade pip and install deps
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
       - name: Prepare Pulumi stack & config
         run: |
           source .venv/bin/activate

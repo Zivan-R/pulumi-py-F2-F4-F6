@@ -146,7 +146,7 @@ up = command.remote.Command(
     connection=conn,
     create=f"""set -eux
 cd /home/{vm_username}/app/compose
-podman compose up -d --build --scale web=2
+podman compose -f compose.yml up -d --build --scale web=2
 podman ps
 """,
     opts=pulumi.ResourceOptions(depends_on=[cp]),
