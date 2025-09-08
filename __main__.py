@@ -52,6 +52,12 @@ vm_res = proxmoxve.vm.VirtualMachine(
     opts=pulumi.ResourceOptions(provider=provider),
 )
 
+start_vm = command.local.Command(
+    "force-start-vm",
+    create=vm_res.vm_id.apply(lambda id: f"qm start {id}"),
+    opts=pulumi.ResourceOptions(depends_on=[vm_res]),
+)
+
 pulumi.export("vmId", vm_res.vm_id)
 pulumi.export("vmName", vm_res.name)
 
