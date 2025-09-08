@@ -37,19 +37,23 @@ jobs:
         run: |
           source .venv/bin/activate
           pulumi login --local
-          pulumi stack select "$STACK_NAME" || pulumi stack init "$STACK_NAME"
-          pulumi config set pve:nodeName proxmox
-          pulumi config set pve:datastoreId local-lvm
-          pulumi config set pve:poolId ci-pool
-          pulumi config set pve:templateVmid 9000
-          pulumi config set vm:username debian
-          pulumi config set vm:bridge vmbr0
+
+          pulumi stack select --stack "$STACK_NAME" || pulumi stack init --stack "$STACK_NAME"
+          pulumi config set --stack "$STACK_NAME" pve:nodeName proxmox
+          pulumi config set --stack "$STACK_NAME" pve:datastoreId local-lvm
+          pulumi config set --stack "$STACK_NAME" pve:poolId ci-pool
+          pulumi config set --stack "$STACK_NAME" pve:templateVmid 9000
+          pulumi config set --stack "$STACK_NAME" vm:username debian
+          #pulumi config set vm:bridge vmbr0
           # IP simple par PR (adapte le /24 si autre réseau)
           OCTET=$((150 + ${{ github.event.pull_request.number }} % 50))
-          pulumi config set vm:ipCidr "192.168.1.${OCTET}/24"
-          pulumi config set vm:gateway "192.168.1.1"
-          pulumi config set vm:sshPubKey "${{ secrets.VM_SSH_PUBLIC_KEY }}"
+          #pulumi config set vm:ipCidr "192.168.1.${OCTET}/24"
+          #pulumi config set vm:gateway "192.168.1.1"
+          pulumi config set --stack "$STACK_NAME" vm:sshPubKey "${{ secrets.VM_SSH_PUBLIC_KEY }}"
+          pulumi config set --stack "$STACK_NAME" vm:cores     2
+          pulumi config set --stack "$STACK_NAME" vm:memoryMb  2048
+
       - name: pulumi up (expected to FAIL first)
         run: |
           source .venv/bin/activate
-          pulumi up -y
+          pulumi up -y --non-interactive --stack "$STACK_NAME"
