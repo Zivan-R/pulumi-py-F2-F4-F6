@@ -3,16 +3,17 @@ import pulumi
 import pulumi_proxmoxve as proxmoxve
 import pulumi_command as command
 
-cfg = pulumi.Config()
-node_name     = cfg.require("pve:nodeName")
-datastore_id  = cfg.require("pve:datastoreId")
-pool_id       = cfg.get("pve:poolId")
-template_vmid = cfg.require_int("pve:templateVmid")
+cfg = pulumi.Config("pve")
+node_name     = cfg.require("nodeName")
+datastore_id  = cfg.require("datastoreId")
+pool_id       = cfg.get("poolId")
+template_vmid = cfg.require_int("templateVmid")
 
-vm_username   = cfg.get("vm:username") or "debian"
-ssh_pub_key   = cfg.require("vm:sshPubKey")
-vm_cores      = cfg.get_int("vm:cores") or 2
-vm_mem_mb     = cfg.get_int("vm:memoryMb") or 2048
+vm = pulumi.Config("vm")
+vm_username   = vm.get("username") or "debian"
+ssh_pub_key   = vm.require("sshPubKey")
+vm_cores      = vm.get_int("cores") or 2
+vm_mem_mb     = vm.get_int("memoryMb") or 2048
 bridge        = "vmbr0"
 
 provider = proxmoxve.Provider(
