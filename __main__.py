@@ -12,17 +12,17 @@ template_vmid = cfg.require_int("templateVmid")
 
 vm = pulumi.Config("vm")
 vm_username   = vm.get("username") or "debian"
-ssh_pub_key   = vm.require("sshPubKey")                     # <-- clé publique lue ici
+ssh_pub_key   = vm.require("sshPubKey")   # <-- clé publique injectée via cloud-init
 vm_cores      = vm.get_int("cores") or 2
 vm_mem_mb     = vm.get_int("memoryMb") or 2048
 bridge        = vm.get("bridge") or "vmbr0"
 
-# IP statique (par défaut ta base: 192.168.1.160/24 + GW 192.168.1.1)
+# IP statique (défaut = 192.168.1.160/24 + GW 192.168.1.1)
 vm_ip_cidr = vm.get("ipCidr") or "192.168.1.160/24"
 vm_gateway = vm.get("gateway") or "192.168.1.1"
 vm_ip_plain = vm.get("ip") or (vm_ip_cidr.split("/")[0] if "/" in vm_ip_cidr else vm_ip_cidr)
 
-# Provider (tokens fournis via env dans le workflow)
+# Provider (tokens en variables d'env)
 provider = proxmoxve.Provider(
     "proxmoxve",
     endpoint=os.environ.get("PROXMOX_VE_ENDPOINT"),
@@ -33,7 +33,7 @@ provider = proxmoxve.Provider(
 
 vm_name = f"ciweb-{pulumi.get_stack()}"
 
-# Cloud-init IP config
+# Cloud-init IP config + DNS (ATTENTION: 'servers' doit être une LISTE)
 ip_configs = [
     proxmoxve.vm.VirtualMachineInitializationIpConfigArgs(
         ipv4=proxmoxve.vm.VirtualMachineInitializationIpConfigIpv4Args(
@@ -49,9 +49,9 @@ vm_res = proxmoxve.vm.VirtualMachine(
     node_name=node_name,
     name=vm_name,
     pool_id=pool_id,
-    started=False,  # on démarre explicitement après
+    started=False,  # on démarre nous-mêmes via l'API (plus fiable depuis le runner)
     agent=proxmoxve.vm.VirtualMachineAgentArgs(enabled=True, trim=True),
-    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="host"),  # safe
+    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="host"),
     memory=proxmoxve.vm.VirtualMachineMemoryArgs(dedicated=vm_mem_mb),
     network_devices=[proxmoxve.vm.VirtualMachineNetworkDeviceArgs(model="virtio", bridge=bridge)],
     clone=proxmoxve.vm.VirtualMachineCloneArgs(
@@ -65,12 +65,12 @@ vm_res = proxmoxve.vm.VirtualMachine(
         datastore_id=datastore_id,
         dns=proxmoxve.vm.VirtualMachineInitializationDnsArgs(
             domain="example.com",
-            servers="192.168.1.1",
+            servers=[vm_gateway],  # ex: ["192.168.1.1"] — LISTE, pas string
         ),
         ip_configs=ip_configs,
         user_account=proxmoxve.vm.VirtualMachineInitializationUserAccountArgs(
             username=vm_username,
-            keys=[ssh_pub_key],  # <-- ta clé publique injectée pour l’utilisateur
+            keys=[ssh_pub_key],
         ),
     ),
     opts=pulumi.ResourceOptions(provider=provider),
@@ -112,28 +112,7 @@ code=$(curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
     opts=pulumi.ResourceOptions(depends_on=[fix_cd]),
 )
 
-# === Wait 'running' via API (backoff exponentiel jusqu’à ~1 min) ===
-wait_running = command.local.Command(
-    "wait-vm-running",
-    create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
-sleep_s=1
-for i in $(seq 1 12); do
-  json=$(curl -sS -k -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
-    "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/current" || true)
-  echo "$json" | grep -q '"status":"running"' && exit 0
-  sleep "$sleep_s"
-  if [ "$sleep_s" -lt 30 ] ; then sleep_s=$(( sleep_s*2 )); else sleep_s=30; fi
-done
-echo "VM not running after waits"; exit 1
-'"""),
-    environment={
-        "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
-        "PVE_TOKEN": os.environ.get("PROXMOX_VE_API_TOKEN"),
-    },
-    opts=pulumi.ResourceOptions(depends_on=[start_vm]),
-)
-
-# === IP: on utilise l’IP statique fournie, sinon agent invité ===
+# === IP effective: priorité à l'IP statique; sinon IP vue par l'agent si dispo ===
 cfg_vm_ip = vm_ip_plain
 
 candidates = []
@@ -188,7 +167,7 @@ exit 1
 wait_for_ssh = command.local.Command(
     "wait-for-ssh",
     create=wait_script,
-    opts=pulumi.ResourceOptions(depends_on=[wait_running]),
+    opts=pulumi.ResourceOptions(depends_on=[start_vm]),
 )
 
 # === Remote provisioning ===
