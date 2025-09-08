@@ -32,10 +32,10 @@ vm_res = proxmoxve.vm.VirtualMachine(
     node_name=node_name,
     name=vm_name,
     pool_id=pool_id,
-    #started=True,
+    started=False,
     #on_boot=True,
     agent=proxmoxve.vm.VirtualMachineAgentArgs(enabled=True, trim=True),
-    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="x86-64-v2-AES"),
+    cpu=proxmoxve.vm.VirtualMachineCpuArgs(cores=vm_cores, sockets=1, type="host"),
     memory=proxmoxve.vm.VirtualMachineMemoryArgs(dedicated=vm_mem_mb),
     network_devices=[proxmoxve.vm.VirtualMachineNetworkDeviceArgs(model="virtio", bridge=bridge)],
     clone=proxmoxve.vm.VirtualMachineCloneArgs(
@@ -58,7 +58,7 @@ start_vm = command.local.Command(
     create=vm_res.vm_id.apply(lambda vid: f"""bash -ceu '
 curl -sS -k -o /dev/null -w "%{{http_code}}\\n" \
   -H "Authorization: PVEAPIToken=$PVE_TOKEN" \
-  -X POST "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/start" | grep -qE "^(200|204)$"
+  -X POST "$PVE_ENDPOINT/api2/json/nodes/{node_name}/qemu/{vid}/status/start" | grep -qE "^(200|202|204)$"
 '"""),
     environment={
         "PVE_ENDPOINT": os.environ.get("PROXMOX_VE_ENDPOINT"),
@@ -71,7 +71,7 @@ pulumi.export("vmId", vm_res.vm_id)
 pulumi.export("vmName", vm_res.name)
 
 # 2) Provision dans la VM via SSH : Podman + app + HAProxy ---
-cfg_vm_ip = cfg.get("ip")  # override manuel possible
+cfg_vm_ip = vm.get("ip")  # override manuel possible
 
 private_key = os.environ.get("VM_SSH_PRIVATE_KEY")
 if not private_key:
