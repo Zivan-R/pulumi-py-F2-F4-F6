@@ -27,7 +27,7 @@ jobs:
 
           # create a reproducible venv named .venv (matches local dev)
           python3 -m venv .venv
-          source .venv/bin/activate
+          . .venv/bin/activate
 
           # upgrade pip and install deps
           python -m pip install --upgrade pip
