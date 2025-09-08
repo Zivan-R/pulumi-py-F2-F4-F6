@@ -17,6 +17,7 @@ jobs:
       VM_SSH_PRIVATE_KEY: ${{ secrets.VM_SSH_PRIVATE_KEY }}
       VM_SSH_PUBLIC_KEY: ${{ secrets.VM_SSH_PUBLIC_KEY }}
       STACK_NAME: pr-${{ github.event.pull_request.number }}
+      PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_PASSPHRASE }}
     steps:
       - uses: actions/checkout@v4
       - uses: pulumi/setup-pulumi@v2
