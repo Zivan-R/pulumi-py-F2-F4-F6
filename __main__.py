@@ -250,23 +250,29 @@ up = command.remote.Command(
     connection=conn,
     create=f"""bash --noprofile --norc -ce '
 cd /home/{vm_username}/app/compose
-podman-compose -f compose.yml up -d --build --scale web=2
-podman ps
+podman-compose up -d --build --remove-orphans
+# attendre que le port 8080 soit ouvert localement (rootless => loopback)
+for i in $(seq 1 20); do
+  ss -ltn '( sport = :8080 )' | grep -q LISTEN && break
+  sleep 1
+done
+podman ps --format "{{{{.Names}}}}  {{{{.Status}}}}  {{{{.Ports}}}}"
 '""",
     opts=pulumi.ResourceOptions(depends_on=[stage_app]),
 )
+
+# --- Smoke test HTTP /health sur 127.0.0.1:8080 ---
 test = command.remote.Command(
     "smoke-test",
     connection=conn,
-    create=f"""bash --noprofile --norc -ce '
-IP="{vm_ip_plain}"
+    create="""bash --noprofile --norc -ce '
 for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 "http://${{IP}}:8080/health" >/dev/null; then
+  if curl -fsS --max-time 2 http://127.0.0.1:8080/health >/dev/null; then
     exit 0
   fi
   sleep 2
 done
-echo "healthcheck failed on http://${{IP}}:8080/health"
+echo "healthcheck failed on http://127.0.0.1:8080/health"
 exit 7
 '""",
     opts=pulumi.ResourceOptions(depends_on=[up]),
